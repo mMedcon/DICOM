@@ -2,3 +2,7 @@ fastapi
 psycopg-2
 python-dotenv
 pydicom
+fernet
+cryptography
+python-multipart
+uvicorn
