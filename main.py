@@ -11,11 +11,26 @@ from pydicom.uid import generate_uid
 
 from database import save_upload_record, save_dicom_metadata, save_ml_result, save_audit_log
 from dicom_utils import convert_to_dicom, anonymize_dicom, encrypt_file
+from fastapi.middleware.cors import CORSMiddleware
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI()
+
+# CORS Middleware
+origins = [
+    "https://editor.wix.com",
+    "https://<your-wix-site-url>" # Replace with your actual Wix site URL
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins for development, can be restricted later
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ✅ Updated response model
 class UploadResponse(BaseModel):
@@ -25,22 +40,30 @@ class UploadResponse(BaseModel):
     confidence: float
 
 @app.post("/upload", response_model=UploadResponse)
-async def upload_image(request: Request, file: UploadFile = File(...)):
+async def upload_image(request: Request):
     try:
+        # Get filename from custom header (case-insensitive)
+        original_filename = request.headers.get("x-file-name")
+        if not original_filename:
+            raise HTTPException(status_code=400, detail="X-File-Name header is missing.")
+
+        # Get file content from the raw request body
+        file_bytes = await request.body()
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="Request body is empty.")
+
         upload_id = str(uuid4())
-        original_filename = file.filename
         ext = os.path.splitext(original_filename)[-1].lower()
         now = datetime.datetime.utcnow()
         ip_address = request.client.host
 
-        # Save original file temporarily
+        # Save original file temporarily from bytes
         temp_path = os.path.join(UPLOAD_DIR, f"{upload_id}{ext}")
         with open(temp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(file_bytes)
 
         # Calculate hash
-        with open(temp_path, "rb") as f:
-            sha256_hash = hashlib.sha256(f.read()).hexdigest()
+        sha256_hash = hashlib.sha256(file_bytes).hexdigest()
 
         # Convert to DICOM
         dicom_path = convert_to_dicom(temp_path, upload_id)
@@ -78,3 +101,7 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
         traceback.print_exc()
         save_audit_log(None, "upload_failed", datetime.datetime.utcnow(), request.client.host, "error", {"error": str(e)})
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the DICOM upload API. Use /upload to post your DICOM files."}

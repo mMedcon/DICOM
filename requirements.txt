@@ -1,8 +1,9 @@
 fastapi
-psycopg-2
+psycopg2-binary
 python-dotenv
 pydicom
 fernet
 cryptography
 python-multipart
 uvicorn
+pydantic
