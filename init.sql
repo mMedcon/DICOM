@@ -1,4 +1,4 @@
-CREATE TABLE uploads (
+CREATE TABLE public.uploads (
     id UUID PRIMARY KEY,
     original_filename TEXT,
     file_type TEXT,
@@ -10,23 +10,23 @@ CREATE TABLE uploads (
     status TEXT
 );
 
-CREATE TABLE dicom_metadata (
-    upload_id UUID REFERENCES uploads(id),
+CREATE TABLE public.dicom_metadata (
+    upload_id UUID REFERENCES public.uploads(id),
     dicom_converted BOOLEAN,
     anonymized BOOLEAN,
     removed_tags JSONB,
     processed_at TIMESTAMP
 );
 
-CREATE TABLE ml_results (
-    upload_id UUID REFERENCES uploads(id),
+CREATE TABLE public.ml_results (
+    upload_id UUID REFERENCES public.uploads(id),
     model_version TEXT,
     diagnosis TEXT,
     confidence_score DECIMAL,
     analyzed_at TIMESTAMP
 );
 
-CREATE TABLE audit_log (
+CREATE TABLE public.audit_log (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     upload_id UUID,
     action TEXT,

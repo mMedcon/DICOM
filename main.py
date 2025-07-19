@@ -73,5 +73,8 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
         )
 
     except Exception as e:
+        print(f"Error during upload processing: {e}")
+        import traceback
+        traceback.print_exc()
         save_audit_log(None, "upload_failed", datetime.datetime.utcnow(), request.client.host, "error", {"error": str(e)})
-        raise HTTPException(status_code=500, detail="File upload failed.")
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
