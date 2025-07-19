@@ -1,12 +1,17 @@
 import psycopg2
 import json
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 conn = psycopg2.connect(
-    dbname="mmedconv2",
-    user="dummy_user",
-    password="dummy_password",
-    host="dummy_host",
-    port="5432"
+    dbname=os.getenv("POSTGRES_DB", "mmedconv2"),
+    user=os.getenv("POSTGRES_USER", "dummy_user"),
+    password=os.getenv("POSTGRES_PASSWORD", "dummy_password"),
+    host=os.getenv("POSTGRES_HOST", "dummy_host"),
+    port=os.getenv("POSTGRES_PORT", "5432")
 )
 conn.autocommit = True
 cur = conn.cursor()
