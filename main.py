@@ -17,9 +17,12 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI()
 
+# ✅ Updated response model
 class UploadResponse(BaseModel):
     upload_id: str
     message: str
+    diagnosis: str
+    confidence: float
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_image(request: Request, file: UploadFile = File(...)):
@@ -61,10 +64,14 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
         # Audit log
         save_audit_log(upload_id, "upload_processed", now, ip_address, "success", {})
 
-        return UploadResponse(upload_id=upload_id, message="Upload and processing complete.")
+        # ✅ Updated return with diagnosis and confidence
+        return UploadResponse(
+            upload_id=upload_id,
+            message="Upload and processing complete.",
+            diagnosis=diagnosis,
+            confidence=confidence
+        )
 
     except Exception as e:
         save_audit_log(None, "upload_failed", datetime.datetime.utcnow(), request.client.host, "error", {"error": str(e)})
         raise HTTPException(status_code=500, detail="File upload failed.")
-
-

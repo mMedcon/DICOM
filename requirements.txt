@@ -1,0 +1,3 @@
+fastapi
+psycopg-2
+dotenv
