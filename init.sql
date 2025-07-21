@@ -35,3 +35,18 @@ CREATE TABLE public.audit_log (
     status TEXT,
     details JSONB
 );
+
+-- New table for Wix uploads collection data
+CREATE TABLE public.wix_uploads (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    upload_id UUID NOT NULL REFERENCES public.uploads(id),
+    upload_time TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, upload_id)
+);
+
+-- Index for faster queries
+CREATE INDEX idx_wix_uploads_user_id ON public.wix_uploads(user_id);
+CREATE INDEX idx_wix_uploads_upload_id ON public.wix_uploads(upload_id);
+CREATE INDEX idx_wix_uploads_time ON public.wix_uploads(upload_time);
