@@ -7,7 +7,18 @@ CREATE TABLE public.uploads (
     storage_path TEXT,
     sha256_hash TEXT,
     encrypted BOOLEAN,
-    status TEXT
+    status TEXT,
+    batch_id UUID
+);
+
+CREATE TABLE public.upload_batches (
+    batch_id UUID PRIMARY KEY,
+    user_id TEXT,
+    total_files INT NOT NULL,
+    processed_files INT DEFAULT 0,
+    status TEXT DEFAULT 'queued',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE public.dicom_metadata (
@@ -36,8 +47,9 @@ CREATE TABLE public.audit_log (
     details JSONB
 );
 
--- New table for Wix uploads collection data
-CREATE TABLE public.wix_uploads (
+
+-- New table for user uploads (frontend-agnostic)
+CREATE TABLE public.user_uploads (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id TEXT NOT NULL,
     upload_id UUID NOT NULL REFERENCES public.uploads(id),
@@ -47,6 +59,6 @@ CREATE TABLE public.wix_uploads (
 );
 
 -- Index for faster queries
-CREATE INDEX idx_wix_uploads_user_id ON public.wix_uploads(user_id);
-CREATE INDEX idx_wix_uploads_upload_id ON public.wix_uploads(upload_id);
-CREATE INDEX idx_wix_uploads_time ON public.wix_uploads(upload_time);
+CREATE INDEX idx_user_uploads_user_id ON public.user_uploads(user_id);
+CREATE INDEX idx_user_uploads_upload_id ON public.user_uploads(upload_id);
+CREATE INDEX idx_user_uploads_time ON public.user_uploads(upload_time);

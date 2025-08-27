@@ -7,3 +7,10 @@ cryptography
 python-multipart
 uvicorn
 pydantic
+pillow
+numpy
+redis
+celery
+python-multipart
+pillow
+numpy

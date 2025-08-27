@@ -20,9 +20,9 @@ try:
         print(f"Executing statement {i+1}: {statement[:50]}...")
         cur.execute(statement)
     
-    print("✅ All database tables created successfully!")
+    print(" All database tables created successfully!")
     
 except Exception as e:
-    print(f"❌ Database table creation failed: {e}")
+    print(f"Database table creation failed: {e}")
     import traceback
     traceback.print_exc()
