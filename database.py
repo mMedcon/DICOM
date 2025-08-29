@@ -7,17 +7,22 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Single connection with optimized settings
-conn = psycopg2.connect(
-    dbname=os.getenv("POSTGRES_DB"),
-    user=os.getenv("POSTGRES_USER"),
-    password=os.getenv("POSTGRES_PASSWORD"),
-    host=os.getenv("POSTGRES_HOST"),
-    port=os.getenv("POSTGRES_PORT"),
-    # Performance optimizations
-    connect_timeout=5,  # 5 second timeout
-    application_name="DICOM_Service"
-)
+db_url = os.getenv("DATABASE_URL")
+if db_url:
+    # Render provides DATABASE_URL
+    conn = psycopg2.connect(db_url, sslmode='require')
+else:
+    # Local development
+    conn = psycopg2.connect(
+        dbname=os.getenv("POSTGRES_DB"),
+        user=os.getenv("POSTGRES_USER"),
+        password=os.getenv("POSTGRES_PASSWORD"),
+        host=os.getenv("POSTGRES_HOST"),
+        port=os.getenv("POSTGRES_PORT"),
+        connect_timeout=5,
+        application_name="DICOM_Service"
+    )
+
 conn.autocommit = True
 cur = conn.cursor()
 

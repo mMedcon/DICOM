@@ -13,12 +13,16 @@ from dicom_utils import convert_to_dicom, anonymize_dicom, encrypt_file, detect_
 import hashlib
 import tempfile
 
-# Initialize Celery
+# Handle both local and Render Redis URLs
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# Initialize Celery with environment-aware Redis URL
 celery_app = Celery(
     'dicom_processor',
-    broker='redis://localhost:6379/0',  # Redis as message broker
-    backend='redis://localhost:6379/0'  # Redis as result backend
+    broker=redis_url,
+    backend=redis_url
 )
+
 
 # Celery configuration - Windows compatible
 celery_app.conf.update(
@@ -47,8 +51,8 @@ def process_batch_upload(self, batch_id: str, files_data: List[Dict], user_id: s
         user_id (str): Optional user ID
     """
     try:
-        print(f"🚀 Starting batch processing for batch_id: {batch_id}")
-        print(f"📁 Processing {len(files_data)} files for user: {user_id}")
+        print(f"Starting batch processing for batch_id: {batch_id}")
+        print(f" {len(files_data)} files for user: {user_id}")
         
         total_files = len(files_data)
         processed_files = 0
@@ -56,13 +60,13 @@ def process_batch_upload(self, batch_id: str, files_data: List[Dict], user_id: s
         results = []
         
         # Update batch status to processing
-        print(f"📊 Updating batch status to processing...")
+        print(f"Updating batch status to processing...")
         update_batch_progress(batch_id, processed_files, total_files, "processing")
-        print(f"✅ Batch status updated successfully")
+        print(f"Batch status updated successfully")
         
         for i, file_info in enumerate(files_data):
             try:
-                print(f"🔄 Processing file {i+1}/{total_files}: {file_info.get('filename', 'unknown')}")
+                print(f"Processing file {i+1}/{total_files}: {file_info.get('filename', 'unknown')}")
                 
                 # Update task progress
                 self.update_state(
@@ -81,16 +85,16 @@ def process_batch_upload(self, batch_id: str, files_data: List[Dict], user_id: s
                 
                 if result['success']:
                     processed_files += 1
-                    print(f"✅ File {i+1} processed successfully")
+                    print(f"File {i+1} processed successfully")
                 else:
                     failed_files += 1
-                    print(f"❌ File {i+1} failed: {result.get('error', 'Unknown error')}")
+                    print(f"File {i+1} failed: {result.get('error', 'Unknown error')}")
                     
                 # Update batch progress in database
                 update_batch_progress(batch_id, processed_files, total_files, "processing")
                 
             except Exception as file_error:
-                print(f"💥 Critical error processing file {i+1} ({file_info.get('filename', 'unknown')}): {file_error}")
+                print(f"Critical error processing file {i+1} ({file_info.get('filename', 'unknown')}): {file_error}")
                 import traceback
                 traceback.print_exc()
                 failed_files += 1
@@ -104,9 +108,9 @@ def process_batch_upload(self, batch_id: str, files_data: List[Dict], user_id: s
         final_status = "completed" if failed_files == 0 else "completed_with_errors"
         update_batch_progress(batch_id, processed_files, total_files, final_status)
         
-        print(f"🎉 Batch processing completed!")
-        print(f"📊 Results: {processed_files}/{total_files} files processed successfully")
-        print(f"❌ Failed files: {failed_files}")
+        print(f"Batch processing completed!")
+        print(f"Results: {processed_files}/{total_files} files processed successfully")
+        print(f"Failed files: {failed_files}")
         
         return {
             'batch_id': batch_id,
@@ -118,7 +122,7 @@ def process_batch_upload(self, batch_id: str, files_data: List[Dict], user_id: s
         }
         
     except Exception as e:
-        print(f"💥 Critical batch processing error: {e}")
+        print(f"Critical batch processing error: {e}")
         import traceback
         traceback.print_exc()
         update_batch_progress(batch_id, processed_files, total_files, "failed")
@@ -131,16 +135,16 @@ def process_single_file(file_info: Dict, batch_id: str, user_id: str = None) -> 
         filename = file_info.get('filename', 'unknown')
         file_content = file_info.get('content')  # Base64 encoded content
         
-        print(f"🔍 Processing file: {filename}")
+        print(f"Processing file: {filename}")
         
         if not file_content:
             raise ValueError("File content is missing from file_info")
         
         # Decode file content
         import base64
-        print(f"📄 Decoding base64 content...")
+        print(f"Decoding base64 content...")
         file_bytes = base64.b64decode(file_content)
-        print(f"✅ File decoded, size: {len(file_bytes)} bytes")
+        print(f"File decoded, size: {len(file_bytes)} bytes")
         
         # Generate upload ID
         upload_id = str(uuid.uuid4())
@@ -148,39 +152,39 @@ def process_single_file(file_info: Dict, batch_id: str, user_id: str = None) -> 
         now = datetime.utcnow()
         
         # Create temporary file
-        print(f"📁 Creating temporary file...")
+        print(f"Creating temporary file...")
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
             temp_file.write(file_bytes)
             temp_path = temp_file.name
-        print(f"✅ Temporary file created: {temp_path}")
+        print(f"Temporary file created: {temp_path}")
         
         try:
             # Detect file type
-            print(f"🔍 Detecting file type...")
+            print(f"Detecting file type...")
             file_type = detect_file_type(file_bytes, filename)
-            print(f"✅ File type detected: {file_type}")
+            print(f"File type detected: {file_type}")
             
             # Calculate hash
             sha256_hash = hashlib.sha256(file_bytes).hexdigest()
             
             if file_type == 'dicom':
-                print(f"🏥 Processing existing DICOM file...")
+                print(f"Processing existing DICOM file...")
                 # Handle existing DICOM files
                 dicom_path = temp_path
                 # Still anonymize existing DICOM
                 anonymized_path, removed_tags = anonymize_dicom(dicom_path)
             else:
-                print(f"🖼️ Converting image to DICOM...")
+                print(f"Converting image to DICOM...")
                 # Convert image to DICOM
                 dicom_path = convert_to_dicom(temp_path, upload_id)
                 # Anonymize converted DICOM
                 anonymized_path, removed_tags = anonymize_dicom(dicom_path)
             
-            print(f"🔒 Encrypting file...")
+            print(f"Encrypting file...")
             # Encrypt the anonymized file
             encrypted_path = encrypt_file(anonymized_path)
             
-            print(f"💾 Saving to database...")
+            print(f"Saving to database...")
             # Save to database
             save_upload_record(upload_id, filename, ext, now, "batch_upload", encrypted_path, sha256_hash, batch_id)
             save_dicom_metadata(upload_id, True, True, removed_tags, now)
@@ -199,7 +203,7 @@ def process_single_file(file_info: Dict, batch_id: str, user_id: str = None) -> 
                 "file_type": file_type
             })
             
-            print(f"✅ File {filename} processed successfully!")
+            print(f"File {filename} processed successfully!")
             
             return {
                 'filename': filename,
@@ -215,12 +219,12 @@ def process_single_file(file_info: Dict, batch_id: str, user_id: str = None) -> 
             try:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
-                    print(f"🗑️ Cleaned up temporary file: {temp_path}")
+                    print(f"Cleaned up temporary file: {temp_path}")
             except Exception as cleanup_error:
-                print(f"⚠️ Warning: Could not clean up temp file {temp_path}: {cleanup_error}")
+                print(f"Warning: Could not clean up temp file {temp_path}: {cleanup_error}")
                 
     except Exception as e:
-        print(f"💥 Critical error processing file {filename}: {e}")
+        print(f"Critical error processing file {filename}: {e}")
         import traceback
         traceback.print_exc()
         return {
