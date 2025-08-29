@@ -38,7 +38,7 @@ app = FastAPI()
 # CORS Middleware (update allowed origins as needed for your Next.js app)
 origins = [
     "http://localhost:3000",  # Next.js local dev
-    "https://your-next-app-domain.com"
+    "https://myometrics.vercel.app"
 ]
 
 app.add_middleware(
