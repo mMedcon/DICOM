@@ -3,28 +3,71 @@ import json
 import os
 from datetime import datetime
 from dotenv import load_dotenv
+from contextlib import contextmanager
 
 # Load environment variables from .env file
 load_dotenv()
 
-db_url = os.getenv("DATABASE_URL")
-if db_url:
-    # Render provides DATABASE_URL
-    conn = psycopg2.connect(db_url, sslmode='require')
-else:
-    # Local development
-    conn = psycopg2.connect(
-        dbname=os.getenv("POSTGRES_DB"),
-        user=os.getenv("POSTGRES_USER"),
-        password=os.getenv("POSTGRES_PASSWORD"),
-        host=os.getenv("POSTGRES_HOST"),
-        port=os.getenv("POSTGRES_PORT"),
-        connect_timeout=5,
-        application_name="DICOM_Service"
-    )
+# Database connection configuration
+DB_CONFIG = {
+    'db_url': os.getenv("DATABASE_URL"),
+    'dbname': os.getenv("POSTGRES_DB"),
+    'user': os.getenv("POSTGRES_USER"),
+    'password': os.getenv("POSTGRES_PASSWORD"),
+    'host': os.getenv("POSTGRES_HOST"),
+    'port': os.getenv("POSTGRES_PORT"),
+}
 
-conn.autocommit = True
-cur = conn.cursor()
+@contextmanager
+def get_db_connection():
+    """Context manager for database connections to ensure they're properly closed"""
+    conn = None
+    try:
+        if DB_CONFIG['db_url']:
+            # Render provides DATABASE_URL
+            conn = psycopg2.connect(DB_CONFIG['db_url'], sslmode='require')
+        else:
+            # Local development
+            conn = psycopg2.connect(
+                dbname=DB_CONFIG['dbname'],
+                user=DB_CONFIG['user'],
+                password=DB_CONFIG['password'],
+                host=DB_CONFIG['host'],
+                port=DB_CONFIG['port'],
+                connect_timeout=5,
+                application_name="DICOM_Service"
+            )
+        
+        conn.autocommit = True
+        yield conn
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise e
+    finally:
+        if conn:
+            conn.close()
+
+# Legacy global connection for backwards compatibility (will be phased out)
+try:
+    if DB_CONFIG['db_url']:
+        conn = psycopg2.connect(DB_CONFIG['db_url'], sslmode='require')
+    else:
+        conn = psycopg2.connect(
+            dbname=DB_CONFIG['dbname'],
+            user=DB_CONFIG['user'],
+            password=DB_CONFIG['password'],
+            host=DB_CONFIG['host'],
+            port=DB_CONFIG['port'],
+            connect_timeout=5,
+            application_name="DICOM_Service"
+        )
+    conn.autocommit = True
+    cur = conn.cursor()
+except Exception as e:
+    print(f"Warning: Could not establish global database connection: {e}")
+    conn = None
+    cur = None
 
 def save_upload_record(upload_id, filename, ext, upload_time, ip, storage_path, sha256_hash, batch_id=None):
     try:
@@ -50,49 +93,55 @@ def save_batch_record(batch_id, user_id, total_files, status="queued"):
         return False
 
 def update_batch_progress(batch_id, processed_files, total_files, status):
-    """Update batch processing progress"""
+    """Update batch processing progress with fresh database connection"""
     try:
-        cur.execute("""
-            UPDATE public.upload_batches 
-            SET processed_files = %s, status = %s, updated_at = %s
-            WHERE batch_id = %s
-        """, (processed_files, status, datetime.utcnow(), batch_id))
-        return True
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE public.upload_batches 
+                    SET processed_files = %s, status = %s, updated_at = %s
+                    WHERE batch_id = %s
+                """, (processed_files, status, datetime.utcnow(), batch_id))
+                return True
     except Exception as e:
         print(f"Error updating batch progress: {e}")
         return False
 
 def get_batch_status(batch_id):
-    """Get batch processing status"""
+    """Get batch processing status with fresh database connection"""
     try:
-        cur.execute("""
-            SELECT batch_id, user_id, total_files, processed_files, status, created_at, updated_at
-            FROM public.upload_batches 
-            WHERE batch_id = %s
-        """, (batch_id,))
-        
-        result = cur.fetchone()
-        if result:
-            columns = [desc[0] for desc in cur.description]
-            return dict(zip(columns, result))
-        return None
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT batch_id, user_id, total_files, processed_files, status, created_at, updated_at
+                    FROM public.upload_batches 
+                    WHERE batch_id = %s
+                """, (batch_id,))
+                
+                result = cur.fetchone()
+                if result:
+                    columns = [desc[0] for desc in cur.description]
+                    return dict(zip(columns, result))
+                return None
     except Exception as e:
         print(f"Error getting batch status: {e}")
         return None
 
 def get_user_batches(user_id):
-    """Get all batches for a user"""
+    """Get all batches for a user with fresh database connection"""
     try:
-        cur.execute("""
-            SELECT batch_id, total_files, processed_files, status, created_at, updated_at
-            FROM public.upload_batches 
-            WHERE user_id = %s 
-            ORDER BY created_at DESC
-        """, (user_id,))
-        
-        columns = [desc[0] for desc in cur.description]
-        results = cur.fetchall()
-        return [dict(zip(columns, row)) for row in results]
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT batch_id, total_files, processed_files, status, created_at, updated_at
+                    FROM public.upload_batches 
+                    WHERE user_id = %s 
+                    ORDER BY created_at DESC
+                """, (user_id,))
+                
+                columns = [desc[0] for desc in cur.description]
+                results = cur.fetchall()
+                return [dict(zip(columns, row)) for row in results]
     except Exception as e:
         print(f"Error getting user batches: {e}")
         return []
@@ -142,7 +191,7 @@ def save_user_upload(user_id, upload_id, upload_time):
 
 def get_user_uploads(user_id):
     """
-    Get all uploads for a specific user
+    Get all uploads for a specific user with fresh database connection
     
     Args:
         user_id (str): The user ID to search for
@@ -151,35 +200,37 @@ def get_user_uploads(user_id):
         list: List of upload records for the user
     """
     try:
-        cur.execute("""
-            SELECT 
-                uu.user_id,
-                uu.upload_id,
-                uu.upload_time,
-                u.original_filename,
-                u.file_type,
-                u.status,
-                u.upload_time as file_upload_time,
-                ml.diagnosis,
-                ml.confidence_score
-            FROM public.user_uploads uu
-            LEFT JOIN public.uploads u ON uu.upload_id = u.id
-            LEFT JOIN public.ml_results ml ON uu.upload_id = ml.upload_id
-            WHERE uu.user_id = %s
-            ORDER BY uu.upload_time DESC
-        """, (user_id,))
-        
-        columns = [desc[0] for desc in cur.description]
-        results = cur.fetchall()
-        
-        return [dict(zip(columns, row)) for row in results]
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        uu.user_id,
+                        uu.upload_id,
+                        uu.upload_time,
+                        u.original_filename,
+                        u.file_type,
+                        u.status,
+                        u.upload_time as file_upload_time,
+                        ml.diagnosis,
+                        ml.confidence_score
+                    FROM public.user_uploads uu
+                    LEFT JOIN public.uploads u ON uu.upload_id = u.id
+                    LEFT JOIN public.ml_results ml ON uu.upload_id = ml.upload_id
+                    WHERE uu.user_id = %s
+                    ORDER BY uu.upload_time DESC
+                """, (user_id,))
+                
+                columns = [desc[0] for desc in cur.description]
+                results = cur.fetchall()
+                
+                return [dict(zip(columns, row)) for row in results]
     except Exception as e:
         print(f"Error getting user uploads: {e}")
         return []
 
 def get_upload_by_id(upload_id):
     """
-    Get upload data by upload ID
+    Get upload data by upload ID with fresh database connection
     
     Args:
         upload_id (str): The upload ID to search for
@@ -188,29 +239,31 @@ def get_upload_by_id(upload_id):
         dict: Upload data or None if not found
     """
     try:
-        cur.execute("""
-            SELECT 
-                uu.user_id,
-                uu.upload_id,
-                uu.upload_time,
-                u.original_filename,
-                u.file_type,
-                u.status,
-                u.uploader_ip,
-                u.upload_time as file_upload_time,
-                ml.diagnosis,
-                ml.confidence_score
-            FROM public.user_uploads uu
-            LEFT JOIN public.uploads u ON uu.upload_id = u.id
-            LEFT JOIN public.ml_results ml ON uu.upload_id = ml.upload_id
-            WHERE uu.upload_id = %s
-        """, (upload_id,))
-        
-        result = cur.fetchone()
-        if result:
-            columns = [desc[0] for desc in cur.description]
-            return dict(zip(columns, result))
-        return None
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        uu.user_id,
+                        uu.upload_id,
+                        uu.upload_time,
+                        u.original_filename,
+                        u.file_type,
+                        u.status,
+                        u.uploader_ip,
+                        u.upload_time as file_upload_time,
+                        ml.diagnosis,
+                        ml.confidence_score
+                    FROM public.user_uploads uu
+                    LEFT JOIN public.uploads u ON uu.upload_id = u.id
+                    LEFT JOIN public.ml_results ml ON uu.upload_id = ml.upload_id
+                    WHERE uu.upload_id = %s
+                """, (upload_id,))
+                
+                result = cur.fetchone()
+                if result:
+                    columns = [desc[0] for desc in cur.description]
+                    return dict(zip(columns, result))
+                return None
     except Exception as e:
         print(f"Error getting upload by ID: {e}")
         return None
