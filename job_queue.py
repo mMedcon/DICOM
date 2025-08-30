@@ -24,7 +24,7 @@ celery_app = Celery(
 )
 
 
-# Celery configuration - Windows compatible
+# Celery configuration - Windows compatible with Redis cleanup
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
@@ -38,7 +38,54 @@ celery_app.conf.update(
     # Windows-specific settings
     worker_pool='solo',  # Use solo pool instead of prefork for Windows
     task_always_eager=False,  # Ensure tasks run asynchronously
+    # Redis cleanup settings
+    result_expires=3600,  # Results expire after 1 hour (3600 seconds)
+    task_ignore_result=False,  # Keep results but expire them
+    # Cleanup settings
+    worker_max_tasks_per_child=100,  # Restart worker after 100 tasks to prevent memory leaks
+    task_acks_late=True,  # Only acknowledge task after completion
 )
+
+def cleanup_redis_queue():
+    """
+    Manual cleanup function to remove old/stale tasks from Redis
+    Call this periodically or when Redis memory is getting full
+    """
+    try:
+        import redis
+        # Connect to Redis using same URL as Celery
+        r = redis.from_url(redis_url)
+        
+        # Get all celery keys
+        celery_keys = r.keys('celery-task-meta-*')
+        
+        if celery_keys:
+            print(f"Found {len(celery_keys)} celery task results in Redis")
+            
+            # Check each key and remove expired ones manually if needed
+            expired_count = 0
+            for key in celery_keys:
+                ttl = r.ttl(key)
+                if ttl == -1:  # No expiration set
+                    # Set expiration to 1 hour from now
+                    r.expire(key, 3600)
+                    expired_count += 1
+            
+            print(f"Set expiration on {expired_count} keys without TTL")
+        
+        # Also clean up any failed/revoked task keys
+        failed_keys = r.keys('celery-task-meta-*') + r.keys('_kombu.binding.*')
+        print(f"Total Redis keys related to Celery: {len(failed_keys)}")
+        
+        return {
+            "status": "success",
+            "celery_keys": len(celery_keys),
+            "expired_set": expired_count
+        }
+        
+    except Exception as e:
+        print(f"Redis cleanup error: {e}")
+        return {"status": "error", "message": str(e)}
 
 @celery_app.task(bind=True)
 def process_batch_upload(self, batch_id: str, files_data: List[Dict], user_id: str = None):

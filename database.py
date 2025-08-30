@@ -153,20 +153,20 @@ def get_user_uploads(user_id):
     try:
         cur.execute("""
             SELECT 
-                wu.user_id,
-                wu.upload_id,
-                wu.upload_time,
-                wu.created_at,
+                uu.user_id,
+                uu.upload_id,
+                uu.upload_time,
                 u.original_filename,
                 u.file_type,
                 u.status,
+                u.upload_time as file_upload_time,
                 ml.diagnosis,
                 ml.confidence_score
-            FROM public.wix_uploads wu
-            LEFT JOIN public.uploads u ON wu.upload_id = u.id
-            LEFT JOIN public.ml_results ml ON wu.upload_id = ml.upload_id
-            WHERE wu.user_id = %s
-            ORDER BY wu.upload_time DESC
+            FROM public.user_uploads uu
+            LEFT JOIN public.uploads u ON uu.upload_id = u.id
+            LEFT JOIN public.ml_results ml ON uu.upload_id = ml.upload_id
+            WHERE uu.user_id = %s
+            ORDER BY uu.upload_time DESC
         """, (user_id,))
         
         columns = [desc[0] for desc in cur.description]
@@ -190,20 +190,20 @@ def get_upload_by_id(upload_id):
     try:
         cur.execute("""
             SELECT 
-                wu.user_id,
-                wu.upload_id,
-                wu.upload_time,
-                wu.created_at,
+                uu.user_id,
+                uu.upload_id,
+                uu.upload_time,
                 u.original_filename,
                 u.file_type,
                 u.status,
                 u.uploader_ip,
+                u.upload_time as file_upload_time,
                 ml.diagnosis,
                 ml.confidence_score
-            FROM public.wix_uploads wu
-            LEFT JOIN public.uploads u ON wu.upload_id = u.id
-            LEFT JOIN public.ml_results ml ON wu.upload_id = ml.upload_id
-            WHERE wu.upload_id = %s
+            FROM public.user_uploads uu
+            LEFT JOIN public.uploads u ON uu.upload_id = u.id
+            LEFT JOIN public.ml_results ml ON uu.upload_id = ml.upload_id
+            WHERE uu.upload_id = %s
         """, (upload_id,))
         
         result = cur.fetchone()

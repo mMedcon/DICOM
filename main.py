@@ -194,7 +194,7 @@ async def get_user_uploads_endpoint(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve user uploads: {str(e)}")
 
-@app.get("/upload/{upload_id}/details")
+@app.get("/upload/{upload_id}")
 async def get_upload_details(upload_id: str):
     """Get upload data from PostgreSQL by upload ID"""
     try:
@@ -239,7 +239,6 @@ async def get_upload_statistics():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve statistics: {str(e)}")
 
-# New Batch Upload Endpoints
 @app.post("/upload/batch", response_model=BatchUploadResponse)
 async def upload_batch(
     request: Request,
@@ -318,6 +317,18 @@ async def get_batch_status_endpoint(batch_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get batch status: {str(e)}")
 
+# Shorthand route for easier frontend access
+@app.get("/batch/{batch_id}", response_model=BatchStatusResponse)
+async def get_batch_status_shorthand(batch_id: str):
+    """Shorthand endpoint for batch status (redirects to full endpoint logic)"""
+    return await get_batch_status_endpoint(batch_id)
+
+# Additional shorthand routes for batch operations
+@app.get("/batch/{batch_id}/files")
+async def get_batch_files_shorthand(batch_id: str):
+    """Shorthand endpoint for batch files"""
+    return await get_batch_files(batch_id)
+
 @app.get("/user/{user_id}/batches")
 async def get_user_batches_endpoint(user_id: str):
     """Get all batch uploads for a user"""
@@ -375,3 +386,52 @@ async def get_batch_files(batch_id: str):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve batch files: {str(e)}")
+
+@app.get("/queue/status")
+async def get_queue_status():
+    """Get Redis queue status and cleanup statistics"""
+    try:
+        if celery_available:
+            from job_queue import cleanup_redis_queue
+            # Get queue cleanup statistics
+            cleanup_stats = cleanup_redis_queue()
+            
+            # Get Celery inspect for active tasks
+            from celery import current_app
+            inspect = current_app.control.inspect()
+            
+            try:
+                active_tasks = inspect.active()
+                scheduled_tasks = inspect.scheduled()
+                reserved_tasks = inspect.reserved()
+                
+                return {
+                    "status": "available",
+                    "celery_available": True,
+                    "cleanup_stats": cleanup_stats,
+                    "active_tasks": active_tasks or {},
+                    "scheduled_tasks": scheduled_tasks or {},
+                    "reserved_tasks": reserved_tasks or {},
+                    "message": "Queue status retrieved successfully"
+                }
+            except Exception as inspect_error:
+                return {
+                    "status": "partial",
+                    "celery_available": True,
+                    "cleanup_stats": cleanup_stats,
+                    "inspect_error": str(inspect_error),
+                    "message": "Queue cleanup stats available, but worker inspection failed"
+                }
+        else:
+            return {
+                "status": "unavailable",
+                "celery_available": False,
+                "message": "Celery not available, using simple processor"
+            }
+            
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "celery_available": celery_available
+        }
