@@ -435,3 +435,58 @@ async def get_queue_status():
             "error": str(e),
             "celery_available": celery_available
         }
+
+@app.get("/upload/{upload_id}/info")
+async def get_image_info(upload_id: str):
+    """
+    Returns metadata about the uploaded image file (not the DICOM metadata).
+    """
+    from database import cur
+    cur.execute("""
+        SELECT original_filename, file_type, upload_time, storage_path
+        FROM public.uploads
+        WHERE id = %s
+    """, (upload_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Upload not found in database")
+    original_filename, file_type, upload_time, storage_path = row
+    exists = storage_path and os.path.exists(storage_path)
+    return {
+        "upload_id": upload_id,
+        "original_filename": original_filename,
+        "file_type": file_type,
+        "upload_time": upload_time,
+        "storage_path": storage_path,
+        "exists": exists
+    }
+
+@app.get("/upload/{upload_id}/file")
+async def get_uploaded_file(upload_id: str):
+    """
+    returns original file with по upload_id.
+    """
+    from database import cur
+    cur.execute("""
+        SELECT original_filename, storage_path
+        FROM public.uploads
+        WHERE id = %s
+    """, (upload_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Upload not found in database")
+    original_filename, storage_path = row
+    if not storage_path or not os.path.exists(storage_path):
+        raise HTTPException(status_code=404, detail="File not found.")
+    ext = os.path.splitext(original_filename)[-1].lower()
+    if ext == ".png":
+        mime = "image/png"
+    elif ext in [".jpg", ".jpeg"]:
+        mime = "image/jpeg"
+    elif ext == ".bmp":
+        mime = "image/bmp"
+    elif ext == ".gif":
+        mime = "image/gif"
+    else:
+        mime = "application/octet-stream"
+    return FileResponse(storage_path, media_type=mime, filename=original_filename)
