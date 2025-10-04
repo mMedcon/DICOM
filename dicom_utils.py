@@ -181,4 +181,13 @@ def detect_file_type(file_content: bytes, filename: str) -> str:
     else:
         return 'image'
 
+def dicom_to_png(dicom_path, png_path):
+    ds = pydicom.dcmread(dicom_path)
+    arr = ds.pixel_array
+    # Нормализация для 8 бит
+    arr = ((arr - arr.min()) / (arr.max() - arr.min()) * 255).astype(np.uint8)
+    img = Image.fromarray(arr)
+    img.save(png_path)
+    return png_path
+
 

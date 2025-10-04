@@ -1,5 +1,6 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Header, Form, Query
+from fastapi import FastAPI, File, Response, UploadFile, HTTPException, Request, Header, Form, Query
 from fastapi.responses import JSONResponse, FileResponse
+import psycopg2
 from pydantic import BaseModel
 from uuid import uuid4
 import os
@@ -29,6 +30,8 @@ except ImportError:
     print("Celery not available, using simple processor only")
 
 import simple_processor
+
+from dicom_utils import dicom_to_png
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -89,13 +92,25 @@ async def upload_image(request: Request, user_id: Optional[str] = Header(None, a
         now = datetime.datetime.utcnow()
         ip_address = request.client.host
 
+        # Calculate hash BEFORE inserting into DB
+        sha256_hash = hashlib.sha256(file_bytes).hexdigest()
+
         # Save original file temporarily from bytes
         temp_path = os.path.join(UPLOAD_DIR, f"{upload_id}{ext}")
+
+        # Сохраняем файл на диск (по желанию)
         with open(temp_path, "wb") as buffer:
             buffer.write(file_bytes)
 
-        # Calculate hash
-        sha256_hash = hashlib.sha256(file_bytes).hexdigest()
+        # Сsaving the bytes directly to the database
+        from database import cur
+        cur.execute("""
+            INSERT INTO public.uploads (
+                id, original_filename, file_type, upload_time, uploader_ip, storage_path, sha256_hash, encrypted, status, batch_id, image_data
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, 'processed', %s, %s)
+        """, (
+            upload_id, original_filename, ext, now, ip_address, temp_path, sha256_hash, None, psycopg2.Binary(file_bytes)
+        ))
 
         # Convert to DICOM
         dicom_path = convert_to_dicom(temp_path, upload_id)
@@ -107,7 +122,16 @@ async def upload_image(request: Request, user_id: Optional[str] = Header(None, a
         encrypted_path = encrypt_file(anonymized_path)
 
         # Save upload record
-        save_upload_record(upload_id, original_filename, ext, now, ip_address, encrypted_path, sha256_hash, None)
+        save_upload_record(
+            upload_id,
+            original_filename,
+            ext,
+            now,
+            ip_address,
+            temp_path,  # Local path
+            sha256_hash,
+            None
+        )
 
         # Save DICOM metadata
         save_dicom_metadata(upload_id, True, True, removed_tags, now)
@@ -463,21 +487,16 @@ async def get_image_info(upload_id: str):
 
 @app.get("/upload/{upload_id}/file")
 async def get_uploaded_file(upload_id: str):
-    """
-    returns original file with по upload_id.
-    """
     from database import cur
     cur.execute("""
-        SELECT original_filename, storage_path
+        SELECT original_filename, file_type, image_data
         FROM public.uploads
         WHERE id = %s
     """, (upload_id,))
     row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Upload not found in database")
-    original_filename, storage_path = row
-    if not storage_path or not os.path.exists(storage_path):
-        raise HTTPException(status_code=404, detail="File not found.")
+    if not row or not row[2]:
+        raise HTTPException(status_code=404, detail="Image not found in database")
+    original_filename, file_type, image_data = row
     ext = os.path.splitext(original_filename)[-1].lower()
     if ext == ".png":
         mime = "image/png"
@@ -489,4 +508,18 @@ async def get_uploaded_file(upload_id: str):
         mime = "image/gif"
     else:
         mime = "application/octet-stream"
-    return FileResponse(storage_path, media_type=mime, filename=original_filename)
+    return Response(content=image_data, media_type=mime, headers={"Content-Disposition": f"inline; filename={original_filename}"})
+
+@app.get("/upload/{upload_id}/preview")
+async def get_preview(upload_id: str):
+    for ext in [".jpg", ".jpeg", ".png"]:
+        img_path = os.path.join(UPLOAD_DIR, f"{upload_id}{ext}")
+        if os.path.exists(img_path):
+            return FileResponse(img_path, media_type="image/jpeg", filename=f"{upload_id}{ext}")
+    dicom_path = os.path.join(UPLOAD_DIR, f"{upload_id}.dcm")
+    png_path = os.path.join(UPLOAD_DIR, f"{upload_id}.png")
+    if os.path.exists(dicom_path):
+        if not os.path.exists(png_path):
+            dicom_to_png(dicom_path, png_path)
+        return FileResponse(png_path, media_type="image/png", filename=f"{upload_id}.png")
+    raise HTTPException(status_code=404, detail="Preview not found")
