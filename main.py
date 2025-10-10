@@ -77,12 +77,13 @@ class BatchStatusResponse(BaseModel):
 @app.post("/upload", response_model=UploadResponse)
 async def upload_image(request: Request, user_id: Optional[str] = Header(None, alias="x-user-id")):
     try:
-        # Get filename from custom header (case-insensitive)
+        
+        image_type = request.query_params.get("image_type")
+
         original_filename = request.headers.get("x-file-name")
         if not original_filename:
             raise HTTPException(status_code=400, detail="X-File-Name header is missing.")
 
-        # Get file content from the raw request body
         file_bytes = await request.body()
         if not file_bytes:
             raise HTTPException(status_code=400, detail="Request body is empty.")
@@ -92,24 +93,19 @@ async def upload_image(request: Request, user_id: Optional[str] = Header(None, a
         now = datetime.datetime.utcnow()
         ip_address = request.client.host
 
-        # Calculate hash BEFORE inserting into DB
         sha256_hash = hashlib.sha256(file_bytes).hexdigest()
-
-        # Save original file temporarily from bytes
         temp_path = os.path.join(UPLOAD_DIR, f"{upload_id}{ext}")
 
-        # Сохраняем файл на диск (по желанию)
         with open(temp_path, "wb") as buffer:
             buffer.write(file_bytes)
 
-        # Сsaving the bytes directly to the database
         from database import cur
         cur.execute("""
             INSERT INTO public.uploads (
-                id, original_filename, file_type, upload_time, uploader_ip, storage_path, sha256_hash, encrypted, status, batch_id, image_data
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, 'processed', %s, %s)
+                id, original_filename, file_type, upload_time, uploader_ip, storage_path, sha256_hash, encrypted, status, batch_id, image_data, image_type
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, 'processed', %s, %s, %s)
         """, (
-            upload_id, original_filename, ext, now, ip_address, temp_path, sha256_hash, None, psycopg2.Binary(file_bytes)
+            upload_id, original_filename, ext, now, ip_address, temp_path, sha256_hash, None, psycopg2.Binary(file_bytes), image_type
         ))
 
         # Convert to DICOM
@@ -467,14 +463,14 @@ async def get_image_info(upload_id: str):
     """
     from database import cur
     cur.execute("""
-        SELECT original_filename, file_type, upload_time, storage_path
+        SELECT original_filename, file_type, upload_time, storage_path, image_type
         FROM public.uploads
         WHERE id = %s
     """, (upload_id,))
     row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Upload not found in database")
-    original_filename, file_type, upload_time, storage_path = row
+    original_filename, file_type, upload_time, storage_path, image_type = row
     exists = storage_path and os.path.exists(storage_path)
     return {
         "upload_id": upload_id,
@@ -482,6 +478,7 @@ async def get_image_info(upload_id: str):
         "file_type": file_type,
         "upload_time": upload_time,
         "storage_path": storage_path,
+        "image_type": image_type,
         "exists": exists
     }
 

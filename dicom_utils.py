@@ -22,7 +22,7 @@ def convert_to_dicom(image_path, upload_id):
         
         # Convert to RGB first if it has transparency or other modes
         if img.mode in ('RGBA', 'P', 'LA'):
-            # Create white background for transparency
+            # Create white background for transparency  
             background = Image.new('RGB', img.size, (255, 255, 255))
             if img.mode == 'P':
                 img = img.convert('RGBA')

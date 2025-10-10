@@ -9,8 +9,10 @@ CREATE TABLE public.uploads (
     encrypted BOOLEAN,
     status TEXT,
     batch_id UUID,
-    image_data BYTEA
+    image_data BYTEA,
+    image_type TEXT
 );
+
 
 CREATE TABLE public.upload_batches (
     batch_id UUID PRIMARY KEY,
@@ -64,4 +66,4 @@ CREATE INDEX idx_user_uploads_user_id ON public.user_uploads(user_id);
 CREATE INDEX idx_user_uploads_upload_id ON public.user_uploads(upload_id);
 CREATE INDEX idx_user_uploads_time ON public.user_uploads(upload_time);
 
-ALTER TABLE public.uploads ADD COLUMN image_data BYTEA;
+
