@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "daikon": "^1.2.46"
+  }
+}
