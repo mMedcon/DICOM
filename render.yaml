@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: dicom-microservice
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: POSTGRES_DB
+        value: myometrics
+      - key: POSTGRES_USER
+        value: avnadmin
+      - key: POSTGRES_PASSWORD
+        value: AVNS_g8WPoIHa1o4ySTvGMlQ
+      - key: POSTGRES_HOST
+        value: pg-mmedcon-finance25.d.aivencloud.com
+      - key: POSTGRES_PORT
+        value: 19447
+      - key: DATABASE_URL
+        value: postgresql://avnadmin:AVNS_g8WPoIHa1o4ySTvGMlQ@pg-mmedcon-finance25.d.aivencloud.com:19447/myometrics
