@@ -12,6 +12,44 @@ from pydicom.uid import generate_uid
 from typing import Optional, List
 import base64
 import json
+import logging
+import logging.handlers
+import sys
+
+# Configure logging
+def setup_logging():
+    """
+    Configure logging for the application with both console and file handlers.
+    Creates a rotating file handler to prevent log files from growing too large.
+    """
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Create console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    # Create file handler for rotating logs
+    os.makedirs('logs', exist_ok=True)
+    file_handler = logging.handlers.RotatingFileHandler(
+        'logs/dicom_service.log',
+        maxBytes=10485760,  # 10MB
+        backupCount=5
+    )
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    return logger
+
+# Initialize logger
+logger = setup_logging()
 
 from database import (
     save_upload_record, save_dicom_metadata, save_ml_result, save_audit_log, 
@@ -76,16 +114,26 @@ class BatchStatusResponse(BaseModel):
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_image(request: Request, user_id: Optional[str] = Header(None, alias="x-user-id")):
+    """
+    Handle single file upload, process it, and return results.
+    
+    This endpoint accepts an image file, converts it to DICOM format,
+    anonymizes and encrypts it, then stores it in the database.
+    """
     try:
+        logger.info(f"Received upload request from IP: {request.client.host}")
         
         image_type = request.query_params.get("image_type")
+        logger.debug(f"Image type: {image_type}")
 
         original_filename = request.headers.get("x-file-name")
         if not original_filename:
+            logger.warning("Upload request missing X-File-Name header")
             raise HTTPException(status_code=400, detail="X-File-Name header is missing.")
 
         file_bytes = await request.body()
         if not file_bytes:
+            logger.warning("Upload request has empty body")
             raise HTTPException(status_code=400, detail="Request body is empty.")
 
         upload_id = str(uuid4())
@@ -93,13 +141,17 @@ async def upload_image(request: Request, user_id: Optional[str] = Header(None, a
         now = datetime.datetime.utcnow()
         ip_address = request.client.host
 
+        logger.info(f"Processing upload: id={upload_id}, filename={original_filename}, size={len(file_bytes)} bytes")
+        
         sha256_hash = hashlib.sha256(file_bytes).hexdigest()
         temp_path = os.path.join(UPLOAD_DIR, f"{upload_id}{ext}")
 
         with open(temp_path, "wb") as buffer:
             buffer.write(file_bytes)
+        logger.debug(f"Saved temporary file to {temp_path}")
 
         from database import cur
+        logger.debug("Inserting upload record into database")
         cur.execute("""
             INSERT INTO public.uploads (
                 id, original_filename, file_type, upload_time, uploader_ip, storage_path, sha256_hash, encrypted, status, batch_id, image_data, image_type
@@ -109,15 +161,22 @@ async def upload_image(request: Request, user_id: Optional[str] = Header(None, a
         ))
 
         # Convert to DICOM
+        logger.info(f"Converting file to DICOM format: {upload_id}")
         dicom_path = convert_to_dicom(temp_path, upload_id)
+        logger.debug(f"DICOM conversion complete: {dicom_path}")
 
         # Anonymize
+        logger.info(f"Anonymizing DICOM file: {upload_id}")
         anonymized_path, removed_tags = anonymize_dicom(dicom_path)
+        logger.debug(f"Anonymization complete: {anonymized_path}, removed {len(removed_tags)} tags")
 
         # Encrypt
+        logger.info(f"Encrypting anonymized DICOM file: {upload_id}")
         encrypted_path = encrypt_file(anonymized_path)
+        logger.debug(f"Encryption complete: {encrypted_path}")
 
         # Save upload record
+        logger.debug(f"Saving upload record to database: {upload_id}")
         save_upload_record(
             upload_id,
             original_filename,
@@ -130,32 +189,38 @@ async def upload_image(request: Request, user_id: Optional[str] = Header(None, a
         )
 
         # Save DICOM metadata
+        logger.debug(f"Saving DICOM metadata to database: {upload_id}")
         save_dicom_metadata(upload_id, True, True, removed_tags, now)
 
         # Trigger ML model (mocked for now)
+        logger.info(f"Running ML analysis on DICOM file: {upload_id}")
         diagnosis, confidence = "Tumor Detected", 0.89
         save_ml_result(upload_id, "v1.0", diagnosis, confidence, now)
-
+        logger.debug(f"ML analysis complete: diagnosis={diagnosis}, confidence={confidence}")
 
         # Save to user_uploads table (generic, not Wix-specific)
         user_upload_saved = False
         if user_id:
             try:
+                logger.info(f"Associating upload with user: user_id={user_id}, upload_id={upload_id}")
                 user_upload_saved = save_user_upload(user_id, upload_id, now)
                 if user_upload_saved:
-                    print(f"Successfully saved to user_uploads table: user_id={user_id}, upload_id={upload_id}")
+                    logger.info(f"Successfully saved to user_uploads table: user_id={user_id}, upload_id={upload_id}")
                 else:
-                    print("Failed to save to user_uploads table")
+                    logger.warning("Failed to save to user_uploads table")
             except Exception as db_error:
-                print(f"Database user_uploads error: {str(db_error)}")
+                logger.error(f"Database user_uploads error: {str(db_error)}")
                 # Don't fail the entire upload if database save fails
         else:
-            print("No user ID provided, skipping user_uploads table save")
+            logger.info("No user ID provided, skipping user_uploads table save")
 
         # Audit log
         audit_data = {"user_upload_saved": user_upload_saved}
+        logger.debug(f"Saving audit log: upload_id={upload_id}, action=upload_processed")
         save_audit_log(upload_id, "upload_processed", now, ip_address, "success", audit_data)
 
+        logger.info(f"Upload processing complete: {upload_id}")
+        
         # Updated return with diagnosis and confidence
         return UploadResponse(
             upload_id=upload_id,
@@ -165,9 +230,9 @@ async def upload_image(request: Request, user_id: Optional[str] = Header(None, a
         )
 
     except Exception as e:
-        print(f"Error during upload processing: {e}")
+        logger.error(f"Error during upload processing: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
         save_audit_log(None, "upload_failed", datetime.datetime.utcnow(), request.client.host, "error", {"error": str(e)})
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
@@ -265,41 +330,63 @@ async def upload_batch(
     user_id: Optional[str] = Header(None, alias="x-user-id")
 ):
     """
-    Upload multiple files for batch processing
-    Expects JSON payload with files data
+    Upload multiple files for batch processing.
+    
+    This endpoint accepts a JSON payload with an array of files (base64 encoded),
+    queues them for background processing, and returns a batch ID for tracking.
+    
+    The processing is done asynchronously using either Celery or a simple
+    background processor, depending on availability.
+    
+    Args:
+        request: The FastAPI request object containing the JSON payload
+        user_id: Optional user ID from the X-User-ID header
+        
+    Returns:
+        BatchUploadResponse with batch ID, status, and file count
     """
     try:
+        logger.info(f"Received batch upload request from IP: {request.client.host}")
+        
         # Get JSON payload containing files
         payload = await request.json()
         files_data = payload.get('files', [])
         
         if not files_data:
+            logger.warning("Batch upload request with no files")
             raise HTTPException(status_code=400, detail="No files provided")
         
         if len(files_data) > 50:  # Limit batch size
+            logger.warning(f"Batch upload request with too many files: {len(files_data)}")
             raise HTTPException(status_code=400, detail="Batch size too large (max 50 files)")
         
         # Generate batch ID
         batch_id = str(uuid4())
         total_files = len(files_data)
+        logger.info(f"Creating new batch: id={batch_id}, files={total_files}, user_id={user_id}")
         
         # Save batch record
+        logger.debug(f"Saving batch record to database: {batch_id}")
         save_batch_record(batch_id, user_id, total_files, "queued")
         
         # Queue the batch for background processing
         # Try Celery first, fallback to simple processor
         if celery_available:
             try:
+                logger.info(f"Queueing batch for Celery processing: {batch_id}")
                 task = process_batch_upload.delay(batch_id, files_data, user_id)
                 processing_method = "celery"
+                logger.debug(f"Celery task created: {task.id}")
             except Exception as celery_error:
-                print(f"Celery failed, using simple processor: {celery_error}")
+                logger.warning(f"Celery failed, using simple processor: {celery_error}")
                 simple_processor.queue_batch_for_processing(batch_id, files_data, user_id)
                 processing_method = "simple"
         else:
+            logger.info(f"Celery not available, using simple processor for batch: {batch_id}")
             simple_processor.queue_batch_for_processing(batch_id, files_data, user_id)
             processing_method = "simple"
         
+        logger.info(f"Batch queued successfully: id={batch_id}, method={processing_method}")
         return BatchUploadResponse(
             batch_id=batch_id,
             message=f"Batch upload queued with {total_files} files ({processing_method})",
@@ -308,21 +395,40 @@ async def upload_batch(
         )
         
     except Exception as e:
-        print(f"Error in batch upload: {e}")
+        logger.error(f"Error in batch upload: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Batch upload failed: {str(e)}")
 
 @app.get("/upload/batch/{batch_id}/status", response_model=BatchStatusResponse)
 async def get_batch_status_endpoint(batch_id: str):
-    """Get the status of a batch upload"""
+    """
+    Get the status of a batch upload.
+    
+    This endpoint retrieves the current status of a batch upload, including
+    the number of processed files and the overall progress percentage.
+    
+    Args:
+        batch_id: The unique identifier of the batch
+        
+    Returns:
+        BatchStatusResponse with batch status details
+    """
     try:
+        logger.info(f"Retrieving status for batch: {batch_id}")
         batch_info = get_batch_status(batch_id)
         
         if not batch_info:
+            logger.warning(f"Batch not found: {batch_id}")
             raise HTTPException(status_code=404, detail="Batch not found")
         
         progress_percentage = 0
         if batch_info['total_files'] > 0:
             progress_percentage = (batch_info['processed_files'] / batch_info['total_files']) * 100
+        
+        logger.debug(f"Batch status: {batch_id}, status={batch_info['status']}, " +
+                    f"progress={batch_info['processed_files']}/{batch_info['total_files']} " +
+                    f"({round(progress_percentage, 2)}%)")
         
         return BatchStatusResponse(
             batch_id=batch_info['batch_id'],
@@ -335,6 +441,9 @@ async def get_batch_status_endpoint(batch_id: str):
         )
         
     except Exception as e:
+        logger.error(f"Error retrieving batch status for {batch_id}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to get batch status: {str(e)}")
 
 # Shorthand route for easier frontend access
