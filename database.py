@@ -412,6 +412,47 @@ def get_upload_by_id(upload_id):
 
 
 # Generic upload stats (not Wix-specific)
+def get_all_uploads():
+    """
+    Get all uploads with their associated user IDs with fresh database connection.
+    
+    Retrieves all uploads from the database, including file details, user IDs,
+    and ML results, ordered by upload time.
+    
+    Returns:
+        list: List of all upload records with their user IDs
+    """
+    try:
+        logger.debug("Getting all uploads with user IDs")
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        uu.user_id,
+                        uu.upload_id,
+                        uu.upload_time,
+                        u.original_filename,
+                        u.file_type,
+                        u.status,
+                        u.upload_time as file_upload_time,
+                        ml.diagnosis,
+                        ml.confidence_score
+                    FROM public.user_uploads uu
+                    LEFT JOIN public.uploads u ON uu.upload_id = u.id
+                    LEFT JOIN public.ml_results ml ON uu.upload_id = ml.upload_id
+                    ORDER BY uu.upload_time DESC
+                """)
+                
+                columns = [desc[0] for desc in cur.description]
+                results = cur.fetchall()
+                uploads = [dict(zip(columns, row)) for row in results]
+                
+                logger.debug(f"Found {len(uploads)} total uploads")
+                return uploads
+    except Exception as e:
+        logger.error(f"Error getting all uploads: {e}")
+        return []
+
 def get_upload_stats():
     """
     Get statistics about user uploads.

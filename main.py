@@ -36,16 +36,6 @@ def setup_logging():
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
     
-    # Create file handler for rotating logs
-    os.makedirs('logs', exist_ok=True)
-    file_handler = logging.handlers.RotatingFileHandler(
-        'logs/dicom_service.log',
-        maxBytes=10485760,  # 10MB
-        backupCount=5
-    )
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-    
     return logger
 
 # Initialize logger
@@ -54,7 +44,8 @@ logger = setup_logging()
 from database import (
     save_upload_record, save_dicom_metadata, save_ml_result, save_audit_log, 
     save_user_upload, get_user_uploads, get_upload_by_id, get_upload_stats,
-    save_batch_record, update_batch_progress, get_batch_status, get_user_batches
+    save_batch_record, update_batch_progress, get_batch_status, get_user_batches,
+    get_all_uploads
 )
 from dicom_utils import convert_to_dicom, anonymize_dicom, encrypt_file
 from fastapi.middleware.cors import CORSMiddleware
@@ -314,6 +305,18 @@ async def get_preprocessed_dicom(upload_id: str):
     if not os.path.exists(dicom_path):
         raise HTTPException(status_code=404, detail="Preprocessed DICOM file not found.")
     return FileResponse(dicom_path, media_type="application/dicom", filename=f"{upload_id}_anon.dcm")
+
+@app.get("/uploads")
+async def get_all_uploads_endpoint():
+    """Get all uploads with their associated user IDs from PostgreSQL"""
+    try:
+        uploads = get_all_uploads()
+        return {
+            "uploads": uploads,
+            "count": len(uploads)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve all uploads: {str(e)}")
 
 @app.get("/stats")
 async def get_upload_statistics():
